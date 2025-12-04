@@ -1,0 +1,388 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct BorrowRecord {
+    char borrowID[20];
+    char bookTitle[200];
+    char author[300];
+    char borrowDate[20];
+    struct BorrowRecord* next;
+} BorrowRecord;
+
+typedef struct {
+    int studentID;
+    char studentName[50];
+    BorrowRecord* borrowList;
+    int borrowCount;
+} Student;
+
+typedef struct {
+    int isOccupied;
+    Student student;
+} HashEntry;
+
+//prototypes
+HashEntry* createHashTable(int size);
+HashEntry* readBorrowings(FILE* inFile, HashEntry* table, int* sizePtr, int method);
+HashEntry* addStudent(HashEntry* table, Student addedStudent, int* size, int method);
+HashEntry* rehash(HashEntry* table, int* size, int method);
+void printTable(HashEntry* table, int size);
+void searchTable(HashEntry* table, int size, int studentID, int method);
+void returnBook(HashEntry* table, int size, int studentID, char borrowID[], int method);
+
+//helper functions
+int next_prime(int size);
+int compute_key(int student_id);
+int hash1(int key, int size);
+int hash2(int key);
+int find_position(HashEntry *table, int key, int method, int size);
+
+int main() {
+    FILE* inFile = fopen("borrowed_books.txt", "r");
+    if (!inFile) {
+        printf("Error: Could not open borrowed_books.txt\n");
+        return 1;
+    }
+    int method = 0;
+    int tableSize = 11;
+    printf("Select collision resolution technique:\n");
+    printf("1. Linear Probing\n");
+    printf("2. Quadratic Probing\n");
+    printf("3. Double Hashing\n");
+    printf("Enter your choice: ");
+    scanf("%d", &method);
+    while (method < 1 || method > 3) {
+        printf("Invalid choice. Enter 1, 2, or 3: ");
+        scanf("%d", &method);
+    }
+    HashEntry* table = createHashTable(tableSize);
+    table = readBorrowings(inFile, table, &tableSize, method);
+    fclose(inFile);
+    int choice = -1;
+    while (choice != 0) {
+        printf("\n------ MENU ------\n");
+        printf("1. Print Hash Table\n");
+        printf("2. Search Student\n");
+        printf("3. Return Book\n");
+        printf("0. Exit\n");
+        printf("Enter your choice: ");
+        scanf("%d", &choice);
+        if (choice == 1) {
+            printTable(table, tableSize);
+        } else if (choice == 2) {
+            int sid;
+            printf("Enter Student ID to search: ");
+            scanf("%d", &sid);
+            searchTable(table, tableSize, sid, method);
+        } else if (choice == 3) {
+            int sid;
+            char borrowID[20];
+            printf("Enter Student ID: ");
+            scanf("%d", &sid);
+            printf("Enter Borrow ID to return: ");
+            scanf("%19s", borrowID);
+            returnBook(table, tableSize, sid, borrowID, method);
+        } else if (choice == 0) {
+            printf("Exiting program...\n");
+        } else {
+            printf("Invalid choice. Try again.\n");
+        }
+    }
+    free(table);
+    return 0;
+}
+
+// HELPER FUNCTIONS==============================================================
+// it calculates a prime number
+// it takes size of the hash table as an input
+// then finds the min prime number which is greater
+// than size
+int next_prime(int size){
+    int prime=size, is_prime,found=0;
+    // if table size is less than or equal to 1
+    // then our next primary number will be (greater than hash tables size) is 2
+    if (size<=1) return 2;
+
+    //else find the prime number
+    while (found==0){
+        prime++;
+        is_prime = 1;
+        for (int i=2; i*i <=prime; i++){
+            if (prime % i==0)
+                is_prime=0;   // its not prime
+
+        }
+        if (is_prime==1) found = 1;   // if primefound make found=1
+    }
+    return prime;
+}
+
+// this func calculates the keys value
+// according to the calculation given in
+// the assignment
+int compute_key(int student_id){
+
+    int key=1, temp_var=student_id;
+    while (temp_var > 0) {
+        // divide its digits
+        // and do calculations of the key value in the given format in the assignment sheet
+        int digit = temp_var % 10;
+        if (digit == 0) digit = 1;
+        key *= digit;
+        temp_var /= 10;
+    }
+    // return the calculated key
+    return key;
+}
+
+//its computing hash1
+int hash1(int key, int size){
+    // its computing hash1=key%size
+    return key % size;
+}
+
+// its computing hash2
+int hash2(int key){
+    // its computing hash2=7-(key%7)
+    return 7 - (key % 7);
+}
+
+// it finds the position of the given key
+// in the hash table
+// according to the method given (linear, quadratic or double hashing)
+int find_position(HashEntry *table, int key, int method, int size){
+
+    int h1, i=0,h2,position;
+    h1 = hash1(key,size); // calculate hash1, h1
+    h2 = hash2(key); // calculate hash 2, h2
+
+    // find the position while i is less than
+    // the size of the table
+    while (i<size) {
+        position=-1;
+        if (method==1)  // its the linear probing method, calculation p = h1 +f(i), f(i)=i
+            position = (h1+i) % size;
+        else if (method == 2)  // its the quadratic probing method, p = h2 + f(i), f(i)=i**2
+            position = (h1+i*i) % size;
+        else if (method==3)  // its the double hashing, p = h1 +f(i), f(i)=i*h2
+            position =(h1+i*h2) % size;
+
+        // if this position is avaliable or it matches with the given student
+        // return position
+        if (!table[position].isOccupied || compute_key(table[position].student.studentID)==key)
+            return position;
+        i++;
+
+        if (i >= size) // not found avaliable position or student that matches
+            return -1;
+    }
+}
+
+// PROTOTYPES=================================================================================
+// create a empty hash table
+// with given size
+// and return the table created
+HashEntry* createHashTable(int size) {
+    // get a memory space with malloc for hash table
+    HashEntry *table = (HashEntry*) malloc (sizeof(HashEntry)* size);
+    for (int i=0; i<size; i++){
+        //create an empty hash table by assigning student id to -1
+        //student name to unassigned
+        //and other attributes to 0
+        table[i].isOccupied = 0;
+        table[i].student.studentID = -1;
+        strcpy(table[i].student.studentName,"unassigned");
+        table[i].student.borrowList =NULL;
+        table[i].student.borrowCount =0;
+    }
+    return table; // return the empty table that we created
+}
+
+// this function gets file, table, size, method as an input
+// then  skips the header and reads the file
+// create new book record
+// then update student table
+// return hash table at the end
+HashEntry* readBorrowings(FILE* inFile, HashEntry* table, int* sizePtr, int method) {
+    int student_id,key, base, hash=0,position, condition=1;
+    // our strings to hold name, id, title and date
+    char student_name[50], borrow_id[20],book_title[200], author[300], borrow_date[20];
+    //skip the header in the text file
+    char header[600];
+    fgets(header, 600, inFile);
+
+    // read the file until the end of the file
+    while (EOF!=(fscanf(inFile, "%d;%49[^;];%19[^;];%199[^;];%299[^;];%19[^\n]",
+                   &student_id, student_name, borrow_id, book_title,
+                   author, borrow_date))){
+
+        BorrowRecord *newBorrow = (BorrowRecord*)malloc(sizeof( BorrowRecord));
+        strcpy( newBorrow->borrowID,borrow_id);
+        strcpy(newBorrow->bookTitle,book_title);
+        strcpy(newBorrow->author,author);
+        strcpy(newBorrow->borrowDate, borrow_date);
+        newBorrow->next=NULL;
+
+        key=compute_key(student_id); // calculate our key value by shown in the assignment paper, with id
+        position =find_position(table, key, method, *sizePtr); // find keys position in the hash table
+
+        // if the student is already on the hash table
+        // update her record
+        if (position!=-1 && table[position].isOccupied &&table[position].student.studentID== student_id) {
+            newBorrow->next = table[position].student.borrowList;
+            table[position].student.borrowList =newBorrow;
+            table[position].student.borrowCount++;}
+        // if the student is not in the hash table
+        //add the student to the hash table
+        else{
+            Student new_student;
+            new_student.studentID = student_id;
+            strcpy(new_student.studentName, student_name);
+            new_student.borrowList = newBorrow;
+            new_student.borrowCount = 1;
+            table = addStudent(table, new_student, sizePtr, method);
+            printf("%d %s has been added to the table, the hash table now can be seen below:\n",student_id, student_name);
+            printTable(table, *sizePtr);}
+    }
+
+    return table;
+}
+
+// this function takes hash table, students, size, method (linear etc.)
+// as an input then counts occupied places in hash table
+// then calculate load factor (num of occupied places/size of hash table)
+// if the size is greater than 0.5 its rehashing
+// then adds the student in the hash table
+// and returns table
+HashEntry* addStudent(HashEntry* table, Student addedStudent, int* size, int method) {
+
+    int occupied=0,key,position;
+    float load_factor;
+
+    for (int i=0;i<*size;i++){ // count the occupied places
+        if (table[i].isOccupied) occupied++;
+    }
+    // calculate the load factor by occupied places divided by table size
+    // if load factor gretaer than 0.5 rehash and get the new table
+    load_factor = (float)occupied/(float)(*size);
+    if (load_factor > 0.5){
+        printf("load factor is %f, rehashing", load_factor);
+        table=rehash(table, size, method);
+    }
+
+    key=compute_key(addedStudent.studentID); // compute its key to get position
+    position = find_position(table, key, method, *size); // get its position, according to the method (linear etc.)
+
+
+
+    // add the student to the table with the calculated position above
+    table[position].isOccupied = 1;
+    table[position].student = addedStudent;
+    return table;
+}
+
+// this func first calculates the new size of the hash table
+// in order to the rehashing
+// then creates a new hash table with calculated size
+// then does rehashing
+// at the end it deletes the old table as well
+// and returns new table
+HashEntry* rehash(HashEntry* table, int* size, int method) {
+
+    int old_size,new_size;
+    old_size = *size;
+    new_size = next_prime(old_size*2); // calculate new size (do size*2 then get next prime number)
+
+    HashEntry *new_table = createHashTable(new_size); // new hash table
+
+    for (int i=0; i<old_size; i++){
+        //get the students in the old table one by one
+        if (table[i].isOccupied){
+            Student student = table[i].student;
+            int key=compute_key(student.studentID); // calculate its key
+            int position = find_position(new_table,key,method,new_size); // compute its new position
+            if (position!=-1){
+                new_table[position].isOccupied =1;
+                new_table[position].student = student;
+            }
+        }
+    }
+
+    free(table); // free the old table
+    *size=new_size; // update its size
+    return new_table;
+}
+
+// this function takes table and size  and
+// prints the hash table with the given format
+// "Index StudentID StudentName BorrowCount"
+void printTable(HashEntry* table, int size) {
+
+    // print the  hash table
+    printf("Index StudentID StudentName BorrowCount\n");
+    // example:
+    // 1 269739 Ahmet 3
+    // 2 245646 Burak 8
+    for (int i=0; i<size; i++){
+        if (table[i].isOccupied){
+            printf("%d %d %s %d\n", i,table[i].student.studentID,table[i].student.studentName,
+                table[i].student.borrowCount);}
+        else printf("%d empty\n", i);
+    }
+}
+
+// this function gets table, size,student id, method
+// then calculates position of the student given by its id
+// if it found it prints the details
+void searchTable(HashEntry* table, int size, int studentID, int method) {
+
+    int key,position;
+    key = compute_key(studentID); // compute key by digits
+    position = find_position(table,key, method, size); //find the position of the key
+
+    // if we found the position,and its position is occupied
+    //also in position there is the student that we were searching for
+    if(position!=-1 &&table[position].isOccupied && table[position].student.studentID==studentID){
+        printf("Student found:\nID: %d, Name: %s\n", studentID, table[position].student.studentName);
+        printf("Borrowed books:\n");
+        BorrowRecord* current =table[position].student.borrowList; // get current table
+        if(current==NULL){ // if student borroed nothing
+            printf("nothing borrowed!!!\n");}
+        else{ // student borrowed something
+            while (current!=NULL){
+                printf("Borrow ID: %s\nTitle: %s\nAuthor: %s\nDate: %s\n", current->borrowID,
+                    current->bookTitle,current->author, current->borrowDate);
+                current = current->next;} // go to next student
+        }}
+}
+
+// it gets the given student in the hash table
+// then goes to his borrow list then finds the book by borrowid
+// then delete the returned book from memory
+void returnBook(HashEntry* table, int size, int studentID, char borrowID[], int method) {
+
+    int key,position;
+    key = compute_key(studentID); // calculate key val
+    position = find_position(table, key, method, size); // find its position (keys position)
+
+
+
+    // traverse list (hash table)
+    BorrowRecord *current=table[position].student.borrowList;
+
+    BorrowRecord *prev=NULL;
+
+    while (current!=NULL){
+        if (strcmp(current->borrowID,borrowID)==0) { // if we found borrow id (borrowed book)in current node (student)
+            if (prev==NULL) table[position].student.borrowList = current->next;
+            else prev->next = current->next;
+            free(current);
+            table[position].student.borrowCount--;
+            printf("borrow id %s removed for student %d.\n", borrowID, studentID);
+        }
+        prev=current;
+        current = current->next;
+    }
+    printf("borrow id not found\n");
+}
